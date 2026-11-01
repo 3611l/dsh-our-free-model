@@ -56,6 +56,12 @@ window.__ModuleLoader__.load({
         'state.throttled': '限流',
         'state.unknown': '未探测',
         'state.listed': '已列出 · 未实测',
+        'quota.ok': '免费池有余量',
+        'quota.exhausted': '免费池已满',
+        'quota.unknown': '免费池未知',
+        'quota.title.ok': '免费车道额度充足：{n} 个模型可用。上游不公布具体数字，能给出的只有这一层。',
+        'quota.title.exhausted': '免费车道额度已用尽（上游返回 Free usage limit reached）：{m} 个模型被限流。开一个新对话，或等上游补充额度。',
+        'quota.title.unknown': '还没有探测结果，无法判断免费车道的余量。到设置页点「重新探测可用性」即可测一次。',
         'roster.selectable': '可选模型',
         'hint.listed': '来自渠道目录，未做逐模型推理测试；不代表对话或工具调用成功。',
         'hint.region': '该模型按出口地区放行。开启网络代理后，插件会在下一次探测自动把它移入可用分组。',
@@ -833,6 +839,12 @@ window.__ModuleLoader__.load({
         'state.throttled': 'Throttled',
         'state.unknown': 'Not probed',
         'state.listed': 'Listed · not tested',
+        'quota.ok': 'Free pool has room',
+        'quota.exhausted': 'Free pool exhausted',
+        'quota.unknown': 'Free pool unknown',
+        'quota.title.ok': 'Free lane has quota: {n} model(s) available. The upstream publishes no counter, so this is the only level it reports.',
+        'quota.title.exhausted': 'Free lane quota is spent (upstream returned Free usage limit reached): {m} model(s) throttled. Start a new conversation, or wait for the upstream to refill.',
+        'quota.title.unknown': 'No probe result yet, so the free lane quota cannot be read. Use the reprobe button in the settings page to measure it.',
         'roster.selectable': 'Selectable models',
         'hint.listed': 'Listed by the channel; inference has not been tested. This does not confirm chat or tool use.',
         'hint.region': 'This model is gated by egress country. Once a proxy changes your egress, the next probe moves it into the available group by itself.',
@@ -2665,6 +2677,15 @@ window.__ModuleLoader__.load({
  .ofm_shell .ofm_navtools .ofm_switch span{display:none}
  .ofm_shell .ofm_navtools .ofm_starbtn{font-size:0;padding:6px;gap:0}
 }
+/* Free-lane pool quota marker in the composer's tool row. */
+.ofm_quota{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px;font-size:11px;line-height:1.7;white-space:nowrap;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border:1px solid transparent}
+.ofm_quota_dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--dsw-alias-label-tertiary)}
+.ofm_quota_text{letter-spacing:.02em}
+.ofm_quota_ok{border-color:var(--dsw-alias-state-success-primary)}
+.ofm_quota_ok .ofm_quota_dot{background:var(--dsw-alias-state-success-primary);box-shadow:0 0 6px var(--dsw-alias-state-success-primary)}
+.ofm_quota_exhausted{border-color:var(--dsw-alias-state-error-primary)}
+.ofm_quota_exhausted .ofm_quota_dot{background:var(--dsw-alias-state-error-primary);box-shadow:0 0 6px var(--dsw-alias-state-error-primary)}
+.ofm_quota_unknown{border-color:var(--dsw-alias-border-l2)}
 `
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -7498,6 +7519,45 @@ window.__ModuleLoader__.load({
       } catch { return 'en' }
     }
 
+    /**
+     * The free lane's pool quota, as a compact marker in the composer's tool
+     * row.
+     *
+     * The upstream publishes no counter - a refused call says only "Free usage
+     * limit reached" - so the badge reports the verdict it does have: green
+     * while the pool answers, red once it refuses, grey before anything has
+     * been measured. The age of the measurement rides along in the tooltip,
+     * because a green from twenty minutes ago is a different claim from a
+     * green from a minute ago.
+     */
+    function QuotaBadge({ t }) {
+      const [quota, setQuota] = useState(undefined)
+      useEffect(() => {
+        let alive = true
+        const load = () => {
+          api('/quota')
+            .then(payload => { if (alive) setQuota(payload) })
+            .catch(() => { if (alive) setQuota({ state: 'unknown', counts: {} }) })
+        }
+        load()
+        const timer = setInterval(load, 60000)
+        return () => { alive = false; clearInterval(timer) }
+      }, [])
+      if (quota === undefined) return null
+      const state = quota.state === 'ok' || quota.state === 'exhausted' ? quota.state : 'unknown'
+      const label = state === 'ok' ? t('quota.ok') : state === 'exhausted' ? t('quota.exhausted') : t('quota.unknown')
+      const title = (state === 'ok'
+        ? t('quota.title.ok')
+        : state === 'exhausted' ? t('quota.title.exhausted') : t('quota.title.unknown'))
+        .replace('{n}', String(quota.counts?.available ?? 0))
+        .replace('{m}', String(quota.counts?.throttled ?? 0))
+      const className = state === 'ok'
+        ? 'ofm_quota ofm_quota_ok'
+        : state === 'exhausted' ? 'ofm_quota ofm_quota_exhausted' : 'ofm_quota ofm_quota_unknown'
+      return h('span', { className, title, role: 'status' },
+        h('span', { className: 'ofm_quota_dot' }),
+        h('span', { className: 'ofm_quota_text' }, label))
+    }
     function apply(ctx) {
       const t = ctx.locale.bind(NS)
       ctx.effect(() => ctx.locale.register(NS, { zh: DICT.zh, en: DICT.en }), 'our-free-model: dictionaries')
@@ -7634,6 +7694,13 @@ window.__ModuleLoader__.load({
         order: -50,
         locale: NS,
       }, props => h(AnnouncementGate, { ...props, t: Object.assign(x => t(x), { locale: localeTag(ctx) }) })))
+      // The composer's tool row, at its left: a compact marker for the free
+      // lane's pool quota. The slot is a list, so this adds to the row instead
+      // of shadowing anything the kernel renders there.
+      ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+        name: 'conversation.input.left',
+        locale: NS,
+      }, props => h(QuotaBadge, { ...props, t })))
     }
     /**
      * Owns the announcement's readiness.

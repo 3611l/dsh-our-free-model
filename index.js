@@ -1779,6 +1779,9 @@ export function createApiRoutes(deps) {
       if (method === 'GET' && routePath === '/stats') {
         return send(200, buildStats(deps.stats.get(), deps.catalog()))
       }
+      if (method === 'GET' && routePath === '/quota') {
+        return send(200, buildQuota(deps))
+      }
       if (method === 'GET' && routePath === '/outlet') {
         return send(200, await deps.outletStatus())
       }
@@ -2437,6 +2440,47 @@ function publicSettings(settings, forwardInfo, egressInfo) {
   }
 }
 
+    /** Lanes that carry no availability verdict of their own. */
+    function unprobedEntry(entry) {
+      return isEacEntry(entry) || isKiloEntry(entry) || isAggregateEntry(entry) || isComboEntry(entry) || isSubscriptionEntry(entry)
+    }
+
+    /**
+     * The free lane's pool quota, as far as the upstream lets it be known.
+     *
+     * The upstream publishes no counter: a refused call says only "Free usage
+     * limit reached". What it does say is enough for a verdict - `throttled`
+     * is the pool's `CODE.quota`, `available` is the pool answering. The
+     * verdict is pool-wide, so one refused model is the pool's state rather
+     * than that model's, and the roster's counts ride along so a reader can
+     * see the shape behind the verdict.
+     */
+    function buildQuota(deps) {
+      const snapshot = deps.availability.get() ?? {}
+      const counts = { available: 0, throttled: 0, regionBlocked: 0, unavailable: 0, unknown: 0 }
+      for (const row of deps.state().catalog ?? []) {
+        const verdict = modelAvailability(row.id, snapshot, unprobedEntry(row))
+        const state = verdict?.availability
+        if (state === 'available') counts.available += 1
+        else if (state === 'throttled') counts.throttled += 1
+        else if (state === 'region-blocked') counts.regionBlocked += 1
+        else if (state === 'unavailable') counts.unavailable += 1
+        else counts.unknown += 1
+      }
+      let state = 'unknown'
+      if (counts.throttled > 0) state = 'exhausted'
+      else if (counts.available > 0) state = 'ok'
+      const checkedAt = Number(snapshot.at ?? 0)
+      return {
+        state,
+        // The upstream publishes no counter, so the only level it can report
+        // is "some" or "none". `remaining` stays null until it says more.
+        remaining: null,
+        checkedAt,
+        ageMs: checkedAt > 0 ? Math.max(0, Date.now() - checkedAt) : null,
+        counts,
+      }
+    }
 function buildSummary(deps) {
   const state = deps.state()
   const snapshot = deps.availability.get()
