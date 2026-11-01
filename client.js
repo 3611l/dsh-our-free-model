@@ -7747,8 +7747,14 @@ window.__ModuleLoader__.load({
       // The composer's tool row, at its left: a compact marker for the free
       // lane's pool quota. The slot is a list, so this adds to the row instead
       // of shadowing anything the kernel renders there.
+      // The composer's tool row, at its left: a compact marker for the free
+      // lane's pool quota. The slot is a list, so this adds to the row instead
+      // of shadowing anything the kernel renders there. A list occupant needs
+      // an id: without one the entry is registered but never listed, and the
+      // slot renders empty.
       ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
         name: 'conversation.input.left',
+        id: 'our-free-model-quota',
         locale: NS,
       }, props => h(QuotaBadge, { ...props, t })))
     }
