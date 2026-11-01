@@ -2467,9 +2467,13 @@ function publicSettings(settings, forwardInfo, egressInfo) {
         else if (state === 'unavailable') counts.unavailable += 1
         else counts.unknown += 1
       }
+      // A model that still answers means the lane has room, even when its
+      // neighbours are throttled: the allowance is counted per model, so one
+      // refused sibling is not a refused lane. 'exhausted' therefore means
+      // every probed model was refused, not merely some of them.
       let state = 'unknown'
-      if (counts.throttled > 0) state = 'exhausted'
-      else if (counts.available > 0) state = 'ok'
+      if (counts.available > 0) state = 'ok'
+      else if (counts.throttled > 0) state = 'exhausted'
       const checkedAt = Number(snapshot.at ?? 0)
       return {
         state,
