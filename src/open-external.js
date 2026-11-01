@@ -45,7 +45,14 @@ export function restrictPermissions(file, directory = false) {
   // machine names once decoded as UTF-8; Node reads env vars through the
   // UTF-16 APIs, so USERNAME is always a correct Unicode string.
   const user = process.env.USERNAME ?? ''
+  // Qualify the principal. icacls resolves an unqualified name against the
+  // local machine first, so on a DOMAIN\USER account the grant lands on a
+  // different SID than the process token carries. Combined with
+  // /inheritance:r -- which strips the inherited ACEs the token relied on --
+  // the file is left unwritable for the process that just wrote it, and the
+  // atomic write (write temp -> icacls -> rename) can no longer finish.
+  const principal = process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' + user : user
   execFileSync(path.join(system32, 'icacls.exe'),
-    [file, '/inheritance:r', '/grant:r', `${user}:${directory ? '(OI)(CI)F' : 'F'}`],
+    [file, '/inheritance:r', '/grant:r', `${principal}:${directory ? '(OI)(CI)F' : 'F'}`],
     { stdio: 'ignore', windowsHide: true, shell: false })
 }
